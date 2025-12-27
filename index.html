@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GameBoy Emulator</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            margin: 0 0 20px 0;
+            color: #9bbc0f;
+        }
+        .emulator-container {
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .screen-container {
+            background: #0f380f;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        #screen {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            background: #9bbc0f;
+        }
+        .controls {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 300px;
+        }
+        .controls h3 {
+            margin: 0 0 15px 0;
+            color: #9bbc0f;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        .control-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .btn {
+            background: #9bbc0f;
+            color: #0f380f;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        .btn:hover {
+            background: #8bac00;
+        }
+        .btn:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .key-map {
+            font-size: 13px;
+            line-height: 1.8;
+        }
+        .key-map kbd {
+            background: #0f380f;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-family: monospace;
+            margin-right: 5px;
+        }
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            background: #0f380f;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        .status-item:last-child {
+            margin-bottom: 0;
+        }
+        #fps {
+            color: #9bbc0f;
+        }
+    </style>
+</head>
+<body>
+    <h1>GameBoy Emulator</h1>
+
+    <div class="emulator-container">
+        <div class="screen-container">
+            <canvas id="screen" width="160" height="144"></canvas>
+        </div>
+
+        <div class="controls">
+            <div class="control-group">
+                <label>Load ROM</label>
+                <input type="file" id="rom-input" accept=".gb,.gbc">
+                <button class="btn" onclick="document.getElementById('rom-input').click()">
+                    Select ROM File
+                </button>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn" id="btn-start" disabled>Start</button>
+                <button class="btn" id="btn-pause" disabled>Pause</button>
+                <button class="btn" id="btn-reset" disabled>Reset</button>
+            </div>
+
+            <div class="control-group" style="margin-top: 20px;">
+                <h3>Controls</h3>
+                <div class="key-map">
+                    <div><kbd>Arrow Keys</kbd> D-Pad</div>
+                    <div><kbd>Z</kbd> A Button</div>
+                    <div><kbd>X</kbd> B Button</div>
+                    <div><kbd>Enter</kbd> Start</div>
+                    <div><kbd>Shift</kbd> Select</div>
+                </div>
+            </div>
+
+            <div class="status">
+                <div class="status-item">
+                    <span>Status:</span>
+                    <span id="status">No ROM loaded</span>
+                </div>
+                <div class="status-item">
+                    <span>FPS:</span>
+                    <span id="fps">0</span>
+                </div>
+                <div class="status-item">
+                    <span>ROM:</span>
+                    <span id="rom-name">-</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { Emulator } from './emulator.js';
+
+        const canvas = document.getElementById('screen');
+        const ctx = canvas.getContext('2d');
+
+        // Scale canvas for better visibility
+        canvas.style.width = '480px';
+        canvas.style.height = '432px';
+
+        const emulator = new Emulator(ctx);
+
+        // UI Elements
+        const romInput = document.getElementById('rom-input');
+        const btnStart = document.getElementById('btn-start');
+        const btnPause = document.getElementById('btn-pause');
+        const btnReset = document.getElementById('btn-reset');
+        const statusEl = document.getElementById('status');
+        const fpsEl = document.getElementById('fps');
+        const romNameEl = document.getElementById('rom-name');
+
+        // ROM Loading
+        romInput.addEventListener('change', async (e) => {
+            try {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                statusEl.textContent = 'Loading ROM...';
+                const buffer = await file.arrayBuffer();
+                const rom = new Uint8Array(buffer);
+
+                emulator.loadROM(rom);
+                console.log('ROM loaded:', rom.length, 'bytes');
+
+                romNameEl.textContent = file.name.slice(0, 20);
+                statusEl.textContent = 'Starting...';
+                btnStart.disabled = false;
+                btnReset.disabled = false;
+
+                // Auto-start the emulator
+                emulator.start();
+                statusEl.textContent = 'Running';
+                btnStart.disabled = true;
+                btnPause.disabled = false;
+                console.log('Emulator started');
+            } catch (err) {
+                console.error('Error loading ROM:', err);
+                statusEl.textContent = 'Error: ' + err.message;
+            }
+        });
+
+        // Control Buttons
+        btnStart.addEventListener('click', () => {
+            emulator.start();
+            statusEl.textContent = 'Running';
+            btnStart.disabled = true;
+            btnPause.disabled = false;
+        });
+
+        btnPause.addEventListener('click', () => {
+            if (emulator.running) {
+                emulator.pause();
+                statusEl.textContent = 'Paused';
+                btnPause.textContent = 'Resume';
+            } else {
+                emulator.start();
+                statusEl.textContent = 'Running';
+                btnPause.textContent = 'Pause';
+            }
+        });
+
+        btnReset.addEventListener('click', () => {
+            emulator.reset();
+            statusEl.textContent = 'Reset';
+            btnStart.disabled = false;
+            btnPause.disabled = true;
+            btnPause.textContent = 'Pause';
+        });
+
+        // FPS Counter and debug info
+        setInterval(() => {
+            fpsEl.textContent = emulator.fps.toFixed(1);
+        }, 500);
+
+        // Debug: Expose emulator globally for console debugging
+        window.emulator = emulator;
+        console.log('Emulator ready. Use window.emulator to debug.');
+    </script>
+</body>
+</html>
