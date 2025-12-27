@@ -444,4 +444,11 @@ export class PPU {
         this.imageData32.set(this.frameBuffer);
         this.ctx.putImageData(this.imageData, 0, 0);
     }
+
+    // Set color palette
+    setPalette(colors) {
+        if (colors && colors.length === 4) {
+            this.colors = [...colors];
+        }
+    }
 }

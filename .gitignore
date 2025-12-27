@@ -1,11 +1,9 @@
 # ROM files
-*.gb
-*.gbc
+roms/
 
 # Test output
-*.ppm
-*.png
-test*.mjs
+tests/*.ppm
+tests/*.png
 
 # OS files
 .DS_Store

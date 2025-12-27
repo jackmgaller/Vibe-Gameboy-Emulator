@@ -1,4 +1,4 @@
-// Memory Management Unit with MBC1 support
+// Memory Management Unit with MBC1/MBC3/MBC5 support
 export class MMU {
     constructor() {
         this.reset();
@@ -11,7 +11,7 @@ export class MMU {
 
         // RAM
         this.vram = new Uint8Array(0x2000);      // 8KB Video RAM
-        this.eram = new Uint8Array(0x8000);      // 32KB External RAM (max for MBC1)
+        this.eram = new Uint8Array(0x20000);     // 128KB External RAM (max for MBC5)
         this.wram = new Uint8Array(0x2000);      // 8KB Work RAM
         this.oam = new Uint8Array(0xA0);         // 160 bytes OAM
         this.hram = new Uint8Array(0x7F);        // 127 bytes High RAM
@@ -20,12 +20,27 @@ export class MMU {
         // Interrupt registers
         this.ie = 0;  // Interrupt Enable (0xFFFF)
 
-        // MBC1 state
-        this.mbcType = 0;        // 0 = ROM only, 1 = MBC1
-        this.romBank = 1;        // Current ROM bank (1-127)
-        this.ramBank = 0;        // Current RAM bank (0-3)
+        // MBC state
+        this.mbcType = 0;        // 0 = ROM only, 1 = MBC1, 3 = MBC3, 5 = MBC5
+        this.romBank = 1;        // Current ROM bank
+        this.romBankHigh = 0;    // High bit of ROM bank (MBC5)
+        this.ramBank = 0;        // Current RAM bank
         this.ramEnabled = false; // RAM enable flag
-        this.mbcMode = 0;        // 0 = ROM mode, 1 = RAM mode
+        this.mbcMode = 0;        // 0 = ROM mode, 1 = RAM mode (MBC1)
+
+        // MBC3 RTC registers
+        this.rtcEnabled = false;
+        this.rtcRegister = 0;    // Selected RTC register (0x08-0x0C)
+        this.rtcLatched = false;
+        this.rtcLatchPrepare = false;
+        this.rtc = {
+            seconds: 0,
+            minutes: 0,
+            hours: 0,
+            daysLow: 0,
+            daysHigh: 0  // bit 0 = day high bit, bit 6 = halt, bit 7 = day carry
+        };
+        this.rtcLatchedData = { ...this.rtc };
 
         // References to other components (set by emulator)
         this.ppu = null;
@@ -89,6 +104,11 @@ export class MMU {
         const cartType = data[0x147];
         if (cartType >= 0x01 && cartType <= 0x03) {
             this.mbcType = 1; // MBC1
+        } else if (cartType >= 0x0F && cartType <= 0x13) {
+            this.mbcType = 3; // MBC3
+            this.hasRTC = (cartType === 0x0F || cartType === 0x10);
+        } else if (cartType >= 0x19 && cartType <= 0x1E) {
+            this.mbcType = 5; // MBC5
         } else {
             this.mbcType = 0; // ROM only
         }
@@ -96,6 +116,11 @@ export class MMU {
         // Calculate ROM banks
         const romSize = data[0x148];
         this.romBanks = 2 << romSize;
+
+        // Calculate RAM size
+        const ramSize = data[0x149];
+        const ramSizes = [0, 0, 0x2000, 0x8000, 0x20000, 0x10000];
+        this.ramSize = ramSizes[ramSize] || 0;
     }
 
     read(addr) {
@@ -105,7 +130,7 @@ export class MMU {
         if (addr < 0x4000) {
             if (!this.rom) return 0xFF;
             if (this.mbcType === 1 && this.mbcMode === 1) {
-                // In RAM mode, bank 0 can be 0x00, 0x20, 0x40, or 0x60
+                // MBC1 RAM mode: bank 0 can be 0x00, 0x20, 0x40, or 0x60
                 const bank = (this.ramBank << 5) % this.romBanks;
                 const romAddr = bank * 0x4000 + addr;
                 return romAddr < this.rom.length ? this.rom[romAddr] : 0xFF;
@@ -118,8 +143,13 @@ export class MMU {
             if (!this.rom) return 0xFF;
             let bank = this.romBank;
             if (this.mbcType === 1) {
+                // MBC1: combine RAM bank bits with ROM bank
                 bank = ((this.ramBank << 5) | this.romBank) % this.romBanks;
+            } else if (this.mbcType === 5) {
+                // MBC5: 9-bit bank number
+                bank = ((this.romBankHigh << 8) | this.romBank) % this.romBanks;
             }
+            // MBC3 just uses romBank directly
             const romAddr = bank * 0x4000 + (addr - 0x4000);
             return romAddr < this.rom.length ? this.rom[romAddr] : 0xFF;
         }
@@ -129,13 +159,33 @@ export class MMU {
             return this.vram[addr - 0x8000];
         }
 
-        // External RAM (0xA000-0xBFFF)
+        // External RAM / RTC (0xA000-0xBFFF)
         if (addr < 0xC000) {
             if (!this.ramEnabled) return 0xFF;
-            const ramAddr = this.mbcMode === 1
-                ? this.ramBank * 0x2000 + (addr - 0xA000)
-                : addr - 0xA000;
-            return this.eram[ramAddr];
+
+            // MBC3 RTC register access
+            if (this.mbcType === 3 && this.ramBank >= 0x08 && this.ramBank <= 0x0C) {
+                const rtc = this.rtcLatched ? this.rtcLatchedData : this.rtc;
+                switch (this.ramBank) {
+                    case 0x08: return rtc.seconds;
+                    case 0x09: return rtc.minutes;
+                    case 0x0A: return rtc.hours;
+                    case 0x0B: return rtc.daysLow;
+                    case 0x0C: return rtc.daysHigh;
+                }
+            }
+
+            // Regular RAM access
+            let ramAddr;
+            if (this.mbcType === 1) {
+                ramAddr = this.mbcMode === 1
+                    ? this.ramBank * 0x2000 + (addr - 0xA000)
+                    : addr - 0xA000;
+            } else {
+                // MBC3 and MBC5 always use ramBank
+                ramAddr = this.ramBank * 0x2000 + (addr - 0xA000);
+            }
+            return ramAddr < this.eram.length ? this.eram[ramAddr] : 0xFF;
         }
 
         // Work RAM (0xC000-0xDFFF)
@@ -176,30 +226,66 @@ export class MMU {
         addr &= 0xFFFF;
         value &= 0xFF;
 
-        // MBC1 control registers (0x0000-0x7FFF)
+        // MBC control registers (0x0000-0x7FFF)
         if (addr < 0x2000) {
-            // RAM Enable
+            // RAM/RTC Enable (all MBCs)
             this.ramEnabled = (value & 0x0F) === 0x0A;
             return;
         }
 
         if (addr < 0x4000) {
-            // ROM Bank Number (lower 5 bits)
-            let bank = value & 0x1F;
-            if (bank === 0) bank = 1;
-            this.romBank = bank;
+            // ROM Bank Number
+            if (this.mbcType === 1) {
+                // MBC1: lower 5 bits, 0 treated as 1
+                let bank = value & 0x1F;
+                if (bank === 0) bank = 1;
+                this.romBank = bank;
+            } else if (this.mbcType === 3) {
+                // MBC3: 7 bits, 0 treated as 1
+                let bank = value & 0x7F;
+                if (bank === 0) bank = 1;
+                this.romBank = bank;
+            } else if (this.mbcType === 5) {
+                // MBC5: lower 8 bits (0x2000-0x2FFF)
+                if (addr < 0x3000) {
+                    this.romBank = value;
+                } else {
+                    // Upper 1 bit (0x3000-0x3FFF)
+                    this.romBankHigh = value & 0x01;
+                }
+            }
             return;
         }
 
         if (addr < 0x6000) {
-            // RAM Bank Number / Upper ROM Bank bits
-            this.ramBank = value & 0x03;
+            // RAM Bank Number / RTC Register Select
+            if (this.mbcType === 1) {
+                this.ramBank = value & 0x03;
+            } else if (this.mbcType === 3) {
+                // MBC3: 0x00-0x03 = RAM bank, 0x08-0x0C = RTC register
+                if (value <= 0x03 || (value >= 0x08 && value <= 0x0C)) {
+                    this.ramBank = value;
+                }
+            } else if (this.mbcType === 5) {
+                // MBC5: 4 bits for RAM bank
+                this.ramBank = value & 0x0F;
+            }
             return;
         }
 
         if (addr < 0x8000) {
-            // Banking Mode Select
-            this.mbcMode = value & 0x01;
+            if (this.mbcType === 1) {
+                // MBC1: Banking Mode Select
+                this.mbcMode = value & 0x01;
+            } else if (this.mbcType === 3) {
+                // MBC3: Latch Clock Data
+                if (this.rtcLatchPrepare && value === 0x01) {
+                    // Latch current RTC values
+                    this.rtcLatchedData = { ...this.rtc };
+                    this.rtcLatched = true;
+                }
+                this.rtcLatchPrepare = (value === 0x00);
+            }
             return;
         }
 
@@ -209,13 +295,34 @@ export class MMU {
             return;
         }
 
-        // External RAM (0xA000-0xBFFF)
+        // External RAM / RTC (0xA000-0xBFFF)
         if (addr < 0xC000) {
             if (!this.ramEnabled) return;
-            const ramAddr = this.mbcMode === 1
-                ? this.ramBank * 0x2000 + (addr - 0xA000)
-                : addr - 0xA000;
-            this.eram[ramAddr] = value;
+
+            // MBC3 RTC register write
+            if (this.mbcType === 3 && this.ramBank >= 0x08 && this.ramBank <= 0x0C) {
+                switch (this.ramBank) {
+                    case 0x08: this.rtc.seconds = value & 0x3F; break;
+                    case 0x09: this.rtc.minutes = value & 0x3F; break;
+                    case 0x0A: this.rtc.hours = value & 0x1F; break;
+                    case 0x0B: this.rtc.daysLow = value; break;
+                    case 0x0C: this.rtc.daysHigh = value & 0xC1; break;
+                }
+                return;
+            }
+
+            // Regular RAM write
+            let ramAddr;
+            if (this.mbcType === 1) {
+                ramAddr = this.mbcMode === 1
+                    ? this.ramBank * 0x2000 + (addr - 0xA000)
+                    : addr - 0xA000;
+            } else {
+                ramAddr = this.ramBank * 0x2000 + (addr - 0xA000);
+            }
+            if (ramAddr < this.eram.length) {
+                this.eram[ramAddr] = value;
+            }
             return;
         }
 

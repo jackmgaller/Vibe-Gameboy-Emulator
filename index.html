@@ -115,6 +115,65 @@
         #fps {
             color: #9bbc0f;
         }
+        .palette-section {
+            margin-top: 20px;
+        }
+        .palette-section h3 {
+            margin: 0 0 10px 0;
+            color: #9bbc0f;
+        }
+        .palette-select {
+            width: 100%;
+            padding: 8px;
+            border-radius: 5px;
+            background: #0f380f;
+            color: #eee;
+            border: 1px solid #9bbc0f;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .palette-select optgroup {
+            background: #16213e;
+            color: #9bbc0f;
+            font-weight: bold;
+        }
+        .palette-select option {
+            background: #0f380f;
+            color: #eee;
+            padding: 4px;
+        }
+        .palette-preview {
+            display: flex;
+            gap: 4px;
+            margin-top: 10px;
+            justify-content: center;
+        }
+        .palette-swatch {
+            width: 32px;
+            height: 32px;
+            border-radius: 4px;
+            border: 2px solid #333;
+        }
+        .palette-hint {
+            font-size: 11px;
+            color: #888;
+            margin-top: 8px;
+            text-align: center;
+        }
+        .palette-name {
+            text-align: center;
+            font-weight: bold;
+            color: #9bbc0f;
+            margin-top: 8px;
+        }
+        #palette-preview-canvas {
+            display: block;
+            margin: 10px auto 0;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            border-radius: 4px;
+            border: 2px solid #333;
+        }
     </style>
 </head>
 <body>
@@ -140,6 +199,11 @@
                 <button class="btn" id="btn-reset" disabled>Reset</button>
             </div>
 
+            <div class="btn-group">
+                <button class="btn" id="btn-save" disabled>Save</button>
+                <button class="btn" id="btn-load" disabled>Load</button>
+            </div>
+
             <div class="control-group" style="margin-top: 20px;">
                 <h3>Audio</h3>
                 <div style="display: flex; align-items: center; gap: 10px;">
@@ -150,6 +214,22 @@
                     <label>Volume</label>
                     <input type="range" id="volume" min="0" max="100" value="50" style="width: 100%;">
                 </div>
+            </div>
+
+            <div class="palette-section">
+                <h3>Color Palette</h3>
+                <select id="palette-select" class="palette-select">
+                    <!-- Populated by JavaScript -->
+                </select>
+                <div class="palette-preview">
+                    <div class="palette-swatch" id="swatch-0"></div>
+                    <div class="palette-swatch" id="swatch-1"></div>
+                    <div class="palette-swatch" id="swatch-2"></div>
+                    <div class="palette-swatch" id="swatch-3"></div>
+                </div>
+                <div class="palette-name" id="palette-name">Classic Green</div>
+                <canvas id="palette-preview-canvas" width="160" height="144"></canvas>
+                <div class="palette-hint">Press <kbd>Tab</kbd> to cycle palettes</div>
             </div>
 
             <div class="control-group" style="margin-top: 20px;">
@@ -181,7 +261,7 @@
     </div>
 
     <script type="module">
-        import { Emulator } from './emulator.js';
+        import { Emulator } from './src/emulator.js';
 
         const canvas = document.getElementById('screen');
         const ctx = canvas.getContext('2d');
@@ -217,6 +297,10 @@
                 statusEl.textContent = 'Starting...';
                 btnStart.disabled = false;
                 btnReset.disabled = false;
+
+                // Enable save/load buttons
+                document.getElementById('btn-save').disabled = false;
+                document.getElementById('btn-load').disabled = !emulator.hasSave();
 
                 // Auto-start the emulator
                 emulator.start();
@@ -257,6 +341,31 @@
             btnPause.textContent = 'Pause';
         });
 
+        // Save/Load buttons
+        const btnSave = document.getElementById('btn-save');
+        const btnLoad = document.getElementById('btn-load');
+
+        btnSave.addEventListener('click', () => {
+            try {
+                const result = emulator.save();
+                statusEl.textContent = `Saved (${(result.size / 1024).toFixed(1)} KB)`;
+                btnLoad.disabled = false;
+            } catch (err) {
+                statusEl.textContent = 'Save failed: ' + err.message;
+                console.error('Save error:', err);
+            }
+        });
+
+        btnLoad.addEventListener('click', () => {
+            try {
+                const result = emulator.load();
+                statusEl.textContent = 'Loaded save';
+            } catch (err) {
+                statusEl.textContent = 'Load failed: ' + err.message;
+                console.error('Load error:', err);
+            }
+        });
+
         // FPS Counter and debug info
         setInterval(() => {
             fpsEl.textContent = emulator.fps.toFixed(1);
@@ -285,6 +394,122 @@
         };
         document.addEventListener('click', resumeAudio, { once: true });
         document.addEventListener('keydown', resumeAudio, { once: true });
+
+        // Palette controls
+        const paletteSelect = document.getElementById('palette-select');
+        const paletteNameEl = document.getElementById('palette-name');
+        const swatches = [
+            document.getElementById('swatch-0'),
+            document.getElementById('swatch-1'),
+            document.getElementById('swatch-2'),
+            document.getElementById('swatch-3')
+        ];
+        const previewCanvas = document.getElementById('palette-preview-canvas');
+        const previewCtx = previewCanvas.getContext('2d');
+        const previewImageData = previewCtx.createImageData(160, 144);
+
+        // Captured Super Mario Land screenshot (RLE compressed, base64 encoded)
+        const previewDataCompressed = "//8D/0ED/6AC/6AA/6AB/6AA/yEBAP8DAwD/egH/IQAD/wMAA/+PAP8EAwAA/wQDAAMAA/8DAAP/VAACAAICAAACAgAC/zAAAwICAP8DA/8DAgMDAAMAAwAAA/9SAAIAAgAAAgIAAAIAAgIAAgL/KgAD/wMCAAP/BQL/AwMAA/8DAAP/UQAC/w0AAgAAAv8pAAP/AwL/AwMBAQMDAAMDAAADAwAD/1AAAv8EAAEAAAH/BAABAAABAAAC/ygAAwIC/wUDAQAA/wcDAAP/UAACAQD/AwEA/wMBAAEAAQABAQIC/ygAAwMCAwMBAwAAAwP/AwEDA/8EAAP/UQAC/wUBAv8IAQL/KQAD/wMCAwEBAwADA/8EAf8DAwADA/9TAAICAQECAAICAQECAQIC/yoAAwL/BAMBAwAA/wUBAwL/AwP/VgACAv8EAAICAAL/LQADAQEDAQP/BAEDAQEDAwICA/+OAAP/BAH/CQP/AwID/x4A/xoD/1cAAwEDAQEDAwH/AwMBAwICA/8eAAP/GAH/AwP/VgD/BAP/AwH/AwABA/8DAgP/HQADAQP/FgADAv8DA/9UAAP/BAADAwEDAAD/BQP/HgADAQD/FgMBAv8DA/9TAAP/AwADAAD/BgMBAQP/HwADAQAD/xQAAwEC/wMD/1MAAwADAP8EAwEBAwICAwEBA/8eAAMBAAP/FAADAQL/AwP/TAD/CAMAAwAA/34D/xUAA/8HAQMAAAMD/3wB/wMD/xMAAwED/wcAAwP/fQADAv8DA/8SAAMBAP+GAwEC/wMD/xIAAwEAA/+EAAMBAv8DA/8SAAMBAAMAAQED/yAA/wsD/1EAAQEDAAMBAv8DA/8SAAMBAAMAAQED/x4A/wMD/wkAA/9RAAEBAwADAQL/AwP/EgADAQADAP8DA/8eAAMAAP8JAQMA/wUDAP8GAwD/CgP/AwD/CgMA/woD/yEA/wMDAAMBAv8DA/8SAAMBAAP/IQADA/8LAQMAA/8DAAMAA/8EAAMAA/8IAAMDAAAD/wgAAwAD/wgAAwP/JAADAQL/AwP/EgADAQAD/yEAA/8MAQMAA/8DAQMAA/8EAQMAA/8IAQADAwAD/wgBAwAD/wgBAAMD/yMAAwEC/wMD/xIAAwEAA/8hAAP/BgH/BwMAA/8DAQMAA/8EAQMAA/8DAf8DA/8DAQADAAP/AwH/BgMAA/8DAf8DA/8DAQAD/yMAAwEC/wMD/xIAAwEAA/8hAAP/BQEDA/8HAAP/AwEDAAP/BAEDAAP/AwEDAAP/BAEDAAP/AwED/wYAA/8DAQMAA/8EAQP/IwADAQL/AwP/EgADAQAD/yEAAwP/BAEA/wMD/wUAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQMAA/8DAf8GAwAD/wMBAwAD/wQBA/8jAAMBAv8DA/8SAAMBAAP/IgAD/wUBAAD/AwP/AwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wQB/wQAAwAD/wMBAwAD/wQBA/8jAAMBAv8DA/8SAAMBAAP/IgD/AwP/BQEAAAMDAAAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wgBAwAD/wMBAwAD/wQBA/8jAAMBAv8DA/8SAAMBAAP/JAD/AwP/BQEAAwMAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQMAA/8DAf8GAwAD/wMB/wMD/wMBAwP/IwADAQL/AwP/EgADAQAD/yYAAwMA/wQBAAMAA/8DAf8DA/8EAQMAA/8DAf8DA/8EAQMAA/8DAQP/BgAD/wMB/wMAAQEDA/8kAAMBAv8DA/8SAAMBAAP/HAD/DAMA/wUBAwAD/wMB/wMA/wQBAwAD/wMB/wMA/wMBAwMAA/8DAf8GAwAD/wcBAwP/JQADAQL/AwP/EgADAQAD/xwAA/8KAP8HAQMAA/8KAQMAA/8IAQMDAAAD/wQB/wQAAwAD/wMB/wMDAQADA/8kAAMBAv8DA/8SAAMBAAP/HAAD/xEBAwAD/woBAwAD/wMB/wYD/wMAA/8IAQMAA/8DAQMAA/8DAQADA/8jAAMBAv8DA/8SAAMBAAP/HAAD/xABAwMAA/8IAQMDAAP/AwED/wgAA/8IAQMAA/8DAQMAA/8DAQADA/8iAAMBAv8DA/8SAAMBAAP/HAAD/w4B/wMD/wMAAwP/BgEDAwAAA/8DAQP/CAAD/wgBAwAD/wMBAwAD/wQBAAP/IgADAQL/AwP/EgADAQAD/xwA/xAD/wYA/wgD/wMA/wUD/wgA/woDAP8FAwD/BwP/IgADAQL/AwP/EgADAQAD/wsA/wYDAP8HA/9rAAMBAv8DA/8SAAMBAAP/CgADA/8EAP8DA/8FAAMD/2oAAwEC/wMD/xIAAwEAA/8JAAMD/wUBAAP/BgEAAwP/AwD/CAP/AwD/CgP/AwD/BQP/AwD/CAP/BAD/BQP/CAD/CAP/AwD/CgP/AwD/CgP/CwADAQL/AwP/EgADAQAD/wkAA/8PAQADAAADA/8GAAMDAAAD/wgAAwMAAAP/AwADAAADA/8GAAMD/wMAA/8DAAP/BwADA/8GAAMDAAAD/wgAAwMAAAP/CAADA/8KAAMBAv8DA/8SAAMBAAP/CQAD/xABAwADA/8HAQADAwAD/wgBAAMDAAP/AwEDAAMD/wcBAAMDAAAD/wMBA/8GAAMD/wcBAAMDAAP/CAEAAwMAA/8IAQADA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMB/wMD/wMB/wMD/wQBAwAD/wMB/wMD/wMBAAMAA/8DAf8DA/8DAQADAAP/AwEDAAP/AwH/AwP/AwEAAwAAA/8DAQP/BgAD/wMB/wMD/wMBAAMAA/8DAf8DA/8DAQADAAP/AwH/AwP/AwEAA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wMBAwAD/wQBAwAAA/8DAQP/BgAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wMBAwAD/wQBAwAAA/8DAQP/BgAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wMBAwAD/wQBAwAAA/8DAQP/BgAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wMBAwAD/wQBAwAAA/8DAQP/BgAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMBAwAD/wMBAwAD/wQBAwAD/wMB/wMD/wQBAwAD/wMB/wMD/wQBAwAD/wMBAwAD/wMBAwAD/wQBAwAAA/8DAQP/BgAD/wMB/wMD/wQBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMBAwAD/wMBAwAD/wQBAwAD/wMB/wMA/wQBAwAD/wMB/wMA/wMBAwMAA/8DAQMAA/8DAQMAA/8EAQMAAAP/AwED/wYAA/8DAf8DAP8EAQMAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQP/CQADAQL/AwP/EgADAQAD/wkAA/8DAQMAA/8DAQMAA/8EAQMAA/8KAQMAA/8IAQMDAAAD/wMBAwAD/wMB/wMD/wQBAwAAA/8DAf8GAwAD/woBAwAD/wMBAwAD/wQBAwAD/wMB/wMD/wQBA/8JAAMBAv8DA/8SAAMBAAP/CQAD/wMBAwAD/wMBAwAD/wQBAwAD/wMB/wMD/wQBAwAD/wMB/wMD/wMBAwMAA/8DAQMAA/8DAf8DAP8EAQMAAAP/BAH/BAADAAP/AwH/AwP/BAEDAAP/AwEDAAP/BAEDAAP/AwH/AwD/BAED/wkAAwEC/wMD/xIAAwEAA/8JAAP/AwEDAAP/AwEDAAP/BAEDAAP/AwEDAAP/BAEDAAP/AwEDAAP/BAEDAAP/AwEDAAP/CgEDAAAD/wgBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/woBA/8JAAMBAv8DA/8SAAMBAAMAAQED/wUAA/8DAQMAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQMAA/8DAQMAAwP/CAEDAwAAA/8IAQMAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQMAA/8JAQMD/wUAAQEDAAMBAv8DA/8SAAMBAAMAAQED/wUAA/8DAQMAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQMAA/8DAQMAA/8EAQMAA/8DAQMAAAMD/wYBAwP/AwAD/wgBAwAD/wMBAwAD/wQBAwAD/wMBAwAD/wQBAwAD/wgBAwP/BgABAQMAAwEC/wMD/xIAAwEAAwD/AwP/BQD/BQMA/wUDAP8GAwD/BQMA/wYDAP8FAwD/BgMA/wUD/wMA/wgD/wQA/woDAP8FAwD/BgMA/wUDAP8GAwD/CgP/BwD/AwMAAwEC/wMD/xIAAwEAA/+EAAMBAv8DA/8SAAMBAP+GAwEC/wMD/xIAAwED/4YBAwL/AwP/EgADA/+IAv8EA/8SAP+OA/8TAP+MA/8VAP+KA/9MAAMBAAP/FAADAQL/AwP/ggADAQAD/xQAAwEC/wMD/0EAAwP/FQD/AwP/JwADAQAD/xQAAwEC/wMD/zgA/wMD/wgAAwP/EQADA/8DAAMD/yUAAwEAA/8UAAMBAv8DA/82AAMD/wMAAwP/CAAD/wMA/wMD/wkAA/8HAAP/AwD/AwP/HgADAQAD/xQAAwEC/wMD/zUAA/8HAAP/BAABAAEAAwAD/wMAAwP/BgAD/wUAAQABAAMAA/8DAAMD/xwAAwEAA/8UAAMBAv8DA/80AAP/BQABAAEAAwAD/wYAA/8GAAP/BAAD/wsAA/8GAAP/GwADAQAD/xQAAwEC/wMD/zMAA/8LAAP/CAAD/wYAAwAAA/8DAAEAAf8HAAP/BgAD/xoAAwEAA/8UAAMBAv8DA/8yAAP/AwABAAH/BwAD/wgAA/8GAAMD/w8AA/8GAAP/GQADAQAD/xQAAwEC/wMD/zEAA/8PAP//A/9BAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMDAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAA///AP//AP+rAP8GA/8DAP8EA/8DAP8FA/80AP8EA/9VAAMD/wQAAwMAAAMDAAADAwAAAwP/MgADAwAAAwP/VAADA/8EAAMDAAADAwAAAwMAAAMD/wMA/wQD/ysAAwMAAAMD/1QAAwP/BAADAwAAAwMAAP8FA/8EAP8EA/8rAAMDAAADA/9UAAMD/wQAAwMAAAMDAAADA/82AAMDAAADA/9UAAMD/wUA/wQD/wMAAwP/NwD/BAP//wD//wD//wD//wD//wD/8QD/BAP/mwAD/wQBA/8LAP8EA/8DAP8GA/8DAP8EA/8DAP8FA/8DAP8GA/9pAAP/BgED/wkAAwP/CAADA/8EAAMAAP8DAwAAAwMAAAMD/wQAAwP/awAD/wYBA/8KAP8EA/8FAAMD/wQAAwAA/wMDAAADAwAAAwP/BAADA/9rAP8IA/8MAP8DA/8EAAMD/wQA/wYDAAD/BQP/BQADA/9sAAP/BAAD/woAAwAA/wMD/wQAAwP/BAADAAD/AwMAAAMDAAP/BgADA/9sAAP/BAAD/wsA/wQD/wUAAwP/BAADAAD/AwMAAAMDAAADA/8EAAMD/20A/wQD//8A//8A//8A//8A//8A//8A//8A//8A//8A//8A/6cA/wMD/yoAAwP/AwADAwADA/8dAAMD/0kAA/8DAAP/BAADA/8FAP8EA/8EAP8EA/8EAP8EA/8KAP8DAwAAAwMAAwP/CAADA/8TAAMD/0gAAwD/AwMAAwAA/wMD/wQAAwAA/wMDAAADAAD/AwMAAAMAAP8DA/8JAP8DAwAAAwP/CgD/BAP/EgADA/9IAAMAA/8DAAP/AwADA/8EAAMAAP8DA/8DAP8EA/8DAAMAAP8DA/8JAAMDAAMAAwMAAwMAAwMAAwMAAAMDAAD/BAMAAAMDAAMD/wMA/wUDAAD/BAP/QgADAP8DAwAD/wMAAwP/BQD/BQMAAAMAAP8DA/8DAP8FA/8JAAMDAAMAAwMAAwMA/wMDAAMDAAMDAAMDAAADAwD/AwMAAwMAAwMAAAMDAAMDAAADA/9CAAP/AwAD/wQAAwP/BwD/AwMAAAMAAP8DA/8FAP8DA/8JAAMDAAD/AwMAAwMAAwMAAAMDAAMDAP8GAwADAwAAAwMAAwMAAAMDAAMDAAADA/9DAP8DA/8EAP8EA/8EAP8EA/8EAP8EA/8EAP8EA/8KAAMDAAD/AwMAAwMAAwMAAAMDAAMDAAMD/wUAAwMAAAMDAAMDAAADAwADAwAAAwP/cAADA/8DAAMDAAMDAAMDAAADAwADAwAA/wUDAAMDAAADAwAA/wUDAAD/BAP//wD//wD//wD//wD//wD/JgA=";
+
+        // Decompress RLE data from base64
+        function decompressRLE(base64) {
+            const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+            const result = [];
+            let i = 0;
+            while (i < bytes.length) {
+                if (bytes[i] === 255) {
+                    const count = bytes[i + 1];
+                    const value = bytes[i + 2];
+                    for (let j = 0; j < count; j++) {
+                        result.push(value);
+                    }
+                    i += 3;
+                } else {
+                    result.push(bytes[i]);
+                    i++;
+                }
+            }
+            return new Uint8Array(result);
+        }
+
+        // Create the preview screenshot data from captured Super Mario Land frame
+        const previewData = decompressRLE(previewDataCompressed);
+
+        // Render preview with current palette
+        function renderPreview(palette) {
+            const data = previewImageData.data;
+            for (let i = 0; i < previewData.length; i++) {
+                const colorIndex = previewData[i];
+                const abgr = palette.colors[colorIndex];
+                const r = abgr & 0xFF;
+                const g = (abgr >> 8) & 0xFF;
+                const b = (abgr >> 16) & 0xFF;
+                const offset = i * 4;
+                data[offset] = r;
+                data[offset + 1] = g;
+                data[offset + 2] = b;
+                data[offset + 3] = 255;
+            }
+            previewCtx.putImageData(previewImageData, 0, 0);
+        }
+
+        // Convert ABGR to CSS hex color
+        function abgrToHex(abgr) {
+            const r = abgr & 0xFF;
+            const g = (abgr >> 8) & 0xFF;
+            const b = (abgr >> 16) & 0xFF;
+            return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+        }
+
+        // Update palette preview swatches and canvas
+        function updatePalettePreview(palette) {
+            palette.colors.forEach((color, i) => {
+                swatches[i].style.backgroundColor = abgrToHex(color);
+            });
+            paletteNameEl.textContent = palette.name;
+            renderPreview(palette);
+        }
+
+        // Populate palette dropdown with categories
+        function populatePaletteDropdown() {
+            const categories = emulator.getPalettesByCategory();
+            paletteSelect.innerHTML = '';
+
+            for (const [categoryName, palettes] of Object.entries(categories)) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = categoryName;
+
+                for (const palette of palettes) {
+                    const option = document.createElement('option');
+                    option.value = palette.key;
+                    option.textContent = palette.name;
+                    optgroup.appendChild(option);
+                }
+
+                paletteSelect.appendChild(optgroup);
+            }
+        }
+
+        // Initialize palette UI
+        populatePaletteDropdown();
+        updatePalettePreview(emulator.getCurrentPalette());
+
+        // Handle palette selection
+        paletteSelect.addEventListener('change', (e) => {
+            emulator.setPalette(e.target.value);
+            updatePalettePreview(emulator.getCurrentPalette());
+        });
+
+        // Tab key to cycle palettes
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const direction = e.shiftKey ? -1 : 1;
+                const newPalette = emulator.cyclePalette(direction);
+                paletteSelect.value = newPalette.key;
+                updatePalettePreview(newPalette);
+            }
+        });
     </script>
 </body>
 </html>
