@@ -6,12 +6,14 @@ export class PPU {
 
         // Create ImageData for the screen (160x144)
         this.imageData = ctx.createImageData(160, 144);
+        // Use Uint32Array view on imageData for fast pixel writes
+        this.imageData32 = new Uint32Array(this.imageData.data.buffer);
         this.frameBuffer = new Uint32Array(160 * 144);
 
-        // Color palette (classic green)
+        // Color palette (classic green) - ABGR format for Uint32Array on little-endian
         this.colors = [
-            0xFF9BBC0F, // Lightest (off)
-            0xFF8BAC0F, // Light
+            0xFF0FBC9B, // Lightest (off)
+            0xFF0FAC8B, // Light
             0xFF306230, // Dark
             0xFF0F380F  // Darkest (on)
         ];
@@ -225,37 +227,79 @@ export class PPU {
     // Render background for a scanline
     renderBackground(line) {
         const tileData = (this.lcdc & 0x10) ? 0x8000 : 0x8800;
-        const tileMap = (this.lcdc & 0x08) ? 0x9C00 : 0x9800;
+        const tileMapBase = (this.lcdc & 0x08) ? 0x9C00 : 0x9800;
         const signed = tileData === 0x8800;
+        const vram = this.mmu.vram;
+        const bgp = this.bgp;
+        const colors = this.colors;
+        const frameBuffer = this.frameBuffer;
 
         const y = (line + this.scy) & 0xFF;
         const tileRow = (y >> 3) & 0x1F;
         const tileY = y & 7;
+        const tileMapRow = tileMapBase + tileRow * 32 - 0x8000;
 
         const lineOffset = line * 160;
+        let x = 0;
 
-        for (let x = 0; x < 160; x++) {
+        // Handle first partial tile (if scrolled)
+        const startTileX = this.scx & 7;
+        if (startTileX !== 0) {
+            const tileCol = (this.scx >> 3) & 0x1F;
+            const tileNum = vram[tileMapRow + tileCol];
+            const tileDataAddr = signed
+                ? 0x9000 + ((tileNum << 24) >> 24) * 16
+                : tileData + tileNum * 16;
+            const addr = tileDataAddr + tileY * 2 - 0x8000;
+            const lo = vram[addr];
+            const hi = vram[addr + 1];
+
+            for (let tileX = startTileX; tileX < 8 && x < 160; tileX++, x++) {
+                const bit = 7 - tileX;
+                const colorId = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1);
+                frameBuffer[lineOffset + x] = colors[(bgp >> (colorId * 2)) & 0x03];
+            }
+        }
+
+        // Render full tiles
+        while (x <= 152) {
+            const scrolledX = (x + this.scx) & 0xFF;
+            const tileCol = (scrolledX >> 3) & 0x1F;
+            const tileNum = vram[tileMapRow + tileCol];
+            const tileDataAddr = signed
+                ? 0x9000 + ((tileNum << 24) >> 24) * 16
+                : tileData + tileNum * 16;
+            const addr = tileDataAddr + tileY * 2 - 0x8000;
+            const lo = vram[addr];
+            const hi = vram[addr + 1];
+
+            // Unrolled loop for 8 pixels
+            frameBuffer[lineOffset + x] = colors[(bgp >> ((((lo >> 7) & 1) | (((hi >> 7) & 1) << 1)) * 2)) & 0x03]; x++;
+            frameBuffer[lineOffset + x] = colors[(bgp >> ((((lo >> 6) & 1) | (((hi >> 6) & 1) << 1)) * 2)) & 0x03]; x++;
+            frameBuffer[lineOffset + x] = colors[(bgp >> ((((lo >> 5) & 1) | (((hi >> 5) & 1) << 1)) * 2)) & 0x03]; x++;
+            frameBuffer[lineOffset + x] = colors[(bgp >> ((((lo >> 4) & 1) | (((hi >> 4) & 1) << 1)) * 2)) & 0x03]; x++;
+            frameBuffer[lineOffset + x] = colors[(bgp >> ((((lo >> 3) & 1) | (((hi >> 3) & 1) << 1)) * 2)) & 0x03]; x++;
+            frameBuffer[lineOffset + x] = colors[(bgp >> ((((lo >> 2) & 1) | (((hi >> 2) & 1) << 1)) * 2)) & 0x03]; x++;
+            frameBuffer[lineOffset + x] = colors[(bgp >> ((((lo >> 1) & 1) | (((hi >> 1) & 1) << 1)) * 2)) & 0x03]; x++;
+            frameBuffer[lineOffset + x] = colors[(bgp >> (((lo & 1) | ((hi & 1) << 1)) * 2)) & 0x03]; x++;
+        }
+
+        // Handle last partial tile
+        while (x < 160) {
             const scrolledX = (x + this.scx) & 0xFF;
             const tileCol = (scrolledX >> 3) & 0x1F;
             const tileX = scrolledX & 7;
-
-            // Get tile number
-            const tileAddr = tileMap + tileRow * 32 + tileCol;
-            let tileNum = this.mmu.vram[tileAddr - 0x8000];
-
-            // Calculate tile data address
-            let tileDataAddr;
-            if (signed) {
-                tileDataAddr = 0x9000 + ((tileNum << 24) >> 24) * 16;
-            } else {
-                tileDataAddr = tileData + tileNum * 16;
-            }
-
-            // Get pixel color
-            const colorId = this.getTilePixel(tileDataAddr, tileX, tileY);
-            const color = (this.bgp >> (colorId * 2)) & 0x03;
-
-            this.frameBuffer[lineOffset + x] = this.colors[color];
+            const tileNum = vram[tileMapRow + tileCol];
+            const tileDataAddr = signed
+                ? 0x9000 + ((tileNum << 24) >> 24) * 16
+                : tileData + tileNum * 16;
+            const addr = tileDataAddr + tileY * 2 - 0x8000;
+            const lo = vram[addr];
+            const hi = vram[addr + 1];
+            const bit = 7 - tileX;
+            const colorId = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1);
+            frameBuffer[lineOffset + x] = colors[(bgp >> (colorId * 2)) & 0x03];
+            x++;
         }
     }
 
@@ -396,15 +440,8 @@ export class PPU {
 
     // Render the frame to canvas
     renderFrame() {
-        const data = this.imageData.data;
-        for (let i = 0; i < this.frameBuffer.length; i++) {
-            const color = this.frameBuffer[i];
-            const idx = i * 4;
-            data[idx] = (color >> 16) & 0xFF;     // R
-            data[idx + 1] = (color >> 8) & 0xFF;  // G
-            data[idx + 2] = color & 0xFF;         // B
-            data[idx + 3] = 255;                   // A
-        }
+        // Direct copy using Uint32Array view - much faster than per-pixel
+        this.imageData32.set(this.frameBuffer);
         this.ctx.putImageData(this.imageData, 0, 0);
     }
 }

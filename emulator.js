@@ -32,6 +32,8 @@ export class Emulator {
         this.fps = 0;
         this.frameCount = 0;
         this.lastFpsTime = 0;
+        this.lastFrameTime = 0;
+        this.targetFrameTime = 1000 / 59.7; // ~16.75ms per frame
 
         // Cycles per frame (4194304 Hz / 59.7 FPS = ~70224 cycles)
         this.cyclesPerFrame = 70224;
@@ -42,9 +44,6 @@ export class Emulator {
         this.romLoaded = true;
         this.reset();
 
-        // Log ROM info
-        const title = this.getROMTitle(data);
-        console.log(`Loaded: ${title}`);
     }
 
     getROMTitle(data) {
@@ -76,34 +75,43 @@ export class Emulator {
             return;
         }
         if (this.running) {
-            console.log('Already running');
             return;
         }
 
-        console.log('Starting emulator...');
         this.running = true;
         this.lastFpsTime = performance.now();
+        this.lastFrameTime = 0;
         this.frameCount = 0;
 
         // Initialize audio (requires user interaction first)
         this.apu.init();
 
-        requestAnimationFrame(() => this.frame());
+        requestAnimationFrame((ts) => this.frame(ts));
     }
 
     pause() {
         this.running = false;
     }
 
-    frame() {
+    frame(timestamp) {
         if (!this.running) return;
 
-        try {
-            const startTime = performance.now();
+        // Initialize lastFrameTime on first frame
+        if (this.lastFrameTime === 0) {
+            this.lastFrameTime = timestamp;
+        }
 
+        // Cap at 60fps - skip frame if not enough time has passed
+        const elapsed = timestamp - this.lastFrameTime;
+        if (elapsed < this.targetFrameTime * 0.9) { // 0.9 gives some slack for timing jitter
+            requestAnimationFrame((ts) => this.frame(ts));
+            return;
+        }
+        this.lastFrameTime = timestamp;
+
+        try {
             // Execute one frame worth of cycles
             let cycles = 0;
-            let frameRendered = false;
             while (cycles < this.cyclesPerFrame) {
                 const stepCycles = this.cpu.step();
                 cycles += stepCycles;
@@ -112,17 +120,10 @@ export class Emulator {
                 this.timer.step(stepCycles);
 
                 // Update PPU
-                if (this.ppu.step(stepCycles)) {
-                    frameRendered = true;
-                }
+                this.ppu.step(stepCycles);
 
                 // Update APU
                 this.apu.step(stepCycles);
-            }
-
-            // Debug: Log first few frames
-            if (this.frameCount < 5) {
-                console.log(`Frame ${this.frameCount}: LCDC=0x${this.ppu.lcdc.toString(16)} LY=${this.ppu.ly} PC=0x${this.cpu.pc.toString(16)} rendered=${frameRendered}`);
             }
 
             // Update FPS counter
@@ -136,17 +137,7 @@ export class Emulator {
             }
 
             // Schedule next frame
-            // Use setTimeout for more accurate timing if we're running too fast
-            const frameTime = performance.now() - startTime;
-            const targetFrameTime = 1000 / 59.7; // ~16.75ms per frame
-
-            if (frameTime < targetFrameTime) {
-                setTimeout(() => {
-                    requestAnimationFrame(() => this.frame());
-                }, targetFrameTime - frameTime);
-            } else {
-                requestAnimationFrame(() => this.frame());
-            }
+            requestAnimationFrame((ts) => this.frame(ts));
         } catch (err) {
             console.error('Emulator error:', err);
             this.running = false;

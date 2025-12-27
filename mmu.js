@@ -96,8 +96,6 @@ export class MMU {
         // Calculate ROM banks
         const romSize = data[0x148];
         this.romBanks = 2 << romSize;
-
-        console.log(`Loaded ROM: ${data.length} bytes, ${this.romBanks} banks, MBC type: ${this.mbcType}`);
     }
 
     read(addr) {

@@ -212,7 +212,6 @@
                 const rom = new Uint8Array(buffer);
 
                 emulator.loadROM(rom);
-                console.log('ROM loaded:', rom.length, 'bytes');
 
                 romNameEl.textContent = file.name.slice(0, 20);
                 statusEl.textContent = 'Starting...';
@@ -224,7 +223,6 @@
                 statusEl.textContent = 'Running';
                 btnStart.disabled = true;
                 btnPause.disabled = false;
-                console.log('Emulator started');
             } catch (err) {
                 console.error('Error loading ROM:', err);
                 statusEl.textContent = 'Error: ' + err.message;
@@ -276,16 +274,13 @@
             emulator.setAudioEnabled(e.target.checked);
         });
 
-        // Debug: Expose emulator globally for console debugging
+        // Expose emulator globally for console debugging
         window.emulator = emulator;
-        console.log('Emulator ready. Use window.emulator to debug.');
 
         // Resume audio on any user interaction (required by browsers)
         const resumeAudio = () => {
             if (emulator.apu.audioContext && emulator.apu.audioContext.state === 'suspended') {
-                emulator.apu.audioContext.resume().then(() => {
-                    console.log('Audio resumed via user interaction');
-                });
+                emulator.apu.audioContext.resume();
             }
         };
         document.addEventListener('click', resumeAudio, { once: true });

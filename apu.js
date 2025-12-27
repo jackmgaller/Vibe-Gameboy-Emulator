@@ -134,9 +134,7 @@ export class APU {
 
             // Resume audio context if suspended (required by browsers)
             if (this.audioContext.state === 'suspended') {
-                this.audioContext.resume().then(() => {
-                    console.log('AudioContext resumed');
-                });
+                this.audioContext.resume();
             }
 
             // Create gain node for volume control
@@ -151,7 +149,6 @@ export class APU {
 
             this.initialized = true;
             this.enabled = true;
-            console.log('APU initialized, sample rate:', this.sampleRate, 'context state:', this.audioContext.state);
         } catch (err) {
             console.error('Failed to initialize audio:', err);
         }
@@ -439,14 +436,6 @@ export class APU {
         const leftChannel = event.outputBuffer.getChannelData(0);
         const rightChannel = event.outputBuffer.getChannelData(1);
         const bufLen = this.sampleBuffer.length;
-
-        // Debug: log first few callbacks
-        if (!this.debugAudioCount) this.debugAudioCount = 0;
-        if (this.debugAudioCount < 5) {
-            const available = this.getBufferedSamples();
-            console.log(`Audio callback ${this.debugAudioCount}: buffered=${available}, need=${leftChannel.length * 2}`);
-            this.debugAudioCount++;
-        }
 
         for (let i = 0; i < leftChannel.length; i++) {
             if (this.bufferReadPos !== this.bufferWritePos) {
