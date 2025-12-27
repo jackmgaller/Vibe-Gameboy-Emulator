@@ -10,7 +10,9 @@ export class APU {
         // Sample rate and buffer
         this.sampleRate = 44100;
         this.samplesPerFrame = this.sampleRate / 60;
-        this.sampleBuffer = [];
+        this.sampleBuffer = new Float32Array(16384); // Ring buffer
+        this.bufferWritePos = 0;
+        this.bufferReadPos = 0;
         this.bufferSize = 4096;
 
         // Frame sequencer (512 Hz, steps 0-7)
@@ -130,6 +132,13 @@ export class APU {
             this.sampleRate = this.audioContext.sampleRate;
             this.cyclesPerSample = 4194304 / this.sampleRate;
 
+            // Resume audio context if suspended (required by browsers)
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume().then(() => {
+                    console.log('AudioContext resumed');
+                });
+            }
+
             // Create gain node for volume control
             this.gainNode = this.audioContext.createGain();
             this.gainNode.gain.value = 0.5;
@@ -142,7 +151,7 @@ export class APU {
 
             this.initialized = true;
             this.enabled = true;
-            console.log('APU initialized, sample rate:', this.sampleRate);
+            console.log('APU initialized, sample rate:', this.sampleRate, 'context state:', this.audioContext.state);
         } catch (err) {
             console.error('Failed to initialize audio:', err);
         }
@@ -152,7 +161,9 @@ export class APU {
         this.frameSequencerCycles = 0;
         this.frameSequencerStep = 0;
         this.sampleCycles = 0;
-        this.sampleBuffer = [];
+        this.bufferWritePos = 0;
+        this.bufferReadPos = 0;
+        this.sampleBuffer.fill(0);
 
         // Reset channels
         this.ch1.enabled = false;
@@ -189,12 +200,12 @@ export class APU {
             // Mix and buffer sample
             if (this.enabled && this.initialized) {
                 const [left, right] = this.mixChannels();
-                this.sampleBuffer.push(left, right);
 
-                // Prevent buffer overflow
-                if (this.sampleBuffer.length > this.bufferSize * 4) {
-                    this.sampleBuffer = this.sampleBuffer.slice(-this.bufferSize * 2);
-                }
+                // Ring buffer write
+                const bufLen = this.sampleBuffer.length;
+                this.sampleBuffer[this.bufferWritePos] = left;
+                this.sampleBuffer[(this.bufferWritePos + 1) % bufLen] = right;
+                this.bufferWritePos = (this.bufferWritePos + 2) % bufLen;
             }
         }
     }
@@ -415,15 +426,33 @@ export class APU {
         return [left, right];
     }
 
+    // Calculate available samples in ring buffer
+    getBufferedSamples() {
+        const bufLen = this.sampleBuffer.length;
+        let available = this.bufferWritePos - this.bufferReadPos;
+        if (available < 0) available += bufLen;
+        return available;
+    }
+
     // Process audio buffer for Web Audio
     processAudio(event) {
         const leftChannel = event.outputBuffer.getChannelData(0);
         const rightChannel = event.outputBuffer.getChannelData(1);
+        const bufLen = this.sampleBuffer.length;
+
+        // Debug: log first few callbacks
+        if (!this.debugAudioCount) this.debugAudioCount = 0;
+        if (this.debugAudioCount < 5) {
+            const available = this.getBufferedSamples();
+            console.log(`Audio callback ${this.debugAudioCount}: buffered=${available}, need=${leftChannel.length * 2}`);
+            this.debugAudioCount++;
+        }
 
         for (let i = 0; i < leftChannel.length; i++) {
-            if (this.sampleBuffer.length >= 2) {
-                leftChannel[i] = this.sampleBuffer.shift();
-                rightChannel[i] = this.sampleBuffer.shift();
+            if (this.bufferReadPos !== this.bufferWritePos) {
+                leftChannel[i] = this.sampleBuffer[this.bufferReadPos];
+                rightChannel[i] = this.sampleBuffer[(this.bufferReadPos + 1) % bufLen];
+                this.bufferReadPos = (this.bufferReadPos + 2) % bufLen;
             } else {
                 leftChannel[i] = 0;
                 rightChannel[i] = 0;
@@ -672,7 +701,9 @@ export class APU {
     setEnabled(enabled) {
         this.enabled = enabled;
         if (!enabled) {
-            this.sampleBuffer = [];
+            this.bufferWritePos = 0;
+            this.bufferReadPos = 0;
+            this.sampleBuffer.fill(0);
         }
     }
 }

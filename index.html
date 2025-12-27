@@ -279,6 +279,17 @@
         // Debug: Expose emulator globally for console debugging
         window.emulator = emulator;
         console.log('Emulator ready. Use window.emulator to debug.');
+
+        // Resume audio on any user interaction (required by browsers)
+        const resumeAudio = () => {
+            if (emulator.apu.audioContext && emulator.apu.audioContext.state === 'suspended') {
+                emulator.apu.audioContext.resume().then(() => {
+                    console.log('Audio resumed via user interaction');
+                });
+            }
+        };
+        document.addEventListener('click', resumeAudio, { once: true });
+        document.addEventListener('keydown', resumeAudio, { once: true });
     </script>
 </body>
 </html>
