@@ -4,6 +4,7 @@ import { CPU } from './cpu.js';
 import { PPU } from './ppu.js';
 import { Timer } from './timer.js';
 import { Input } from './input.js';
+import { APU } from './apu.js';
 
 export class Emulator {
     constructor(ctx) {
@@ -15,11 +16,13 @@ export class Emulator {
         this.ppu = new PPU(this.mmu, ctx);
         this.timer = new Timer(this.mmu);
         this.input = new Input(this.mmu);
+        this.apu = new APU();
 
         // Wire up components
         this.mmu.ppu = this.ppu;
         this.mmu.timer = this.timer;
         this.mmu.input = this.input;
+        this.mmu.apu = this.apu;
 
         // Emulator state
         this.running = false;
@@ -59,6 +62,7 @@ export class Emulator {
         this.ppu.reset();
         this.timer.reset();
         this.input.reset();
+        this.apu.reset();
         this.mmu.initIO();
 
         // Reset timing
@@ -80,6 +84,9 @@ export class Emulator {
         this.running = true;
         this.lastFpsTime = performance.now();
         this.frameCount = 0;
+
+        // Initialize audio (requires user interaction first)
+        this.apu.init();
 
         requestAnimationFrame(() => this.frame());
     }
@@ -108,6 +115,9 @@ export class Emulator {
                 if (this.ppu.step(stepCycles)) {
                     frameRendered = true;
                 }
+
+                // Update APU
+                this.apu.step(stepCycles);
             }
 
             // Debug: Log first few frames
@@ -161,6 +171,15 @@ export class Emulator {
             flags: this.cpu.f,
             cycles: cycles
         };
+    }
+
+    // Audio control
+    setVolume(volume) {
+        this.apu.setVolume(volume);
+    }
+
+    setAudioEnabled(enabled) {
+        this.apu.setEnabled(enabled);
     }
 
     // Debug: Get CPU state

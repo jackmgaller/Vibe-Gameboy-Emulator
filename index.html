@@ -141,6 +141,18 @@
             </div>
 
             <div class="control-group" style="margin-top: 20px;">
+                <h3>Audio</h3>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" id="audio-enabled" checked>
+                    <label for="audio-enabled" style="margin: 0;">Enable Sound</label>
+                </div>
+                <div style="margin-top: 10px;">
+                    <label>Volume</label>
+                    <input type="range" id="volume" min="0" max="100" value="50" style="width: 100%;">
+                </div>
+            </div>
+
+            <div class="control-group" style="margin-top: 20px;">
                 <h3>Controls</h3>
                 <div class="key-map">
                     <div><kbd>Arrow Keys</kbd> D-Pad</div>
@@ -251,6 +263,18 @@
         setInterval(() => {
             fpsEl.textContent = emulator.fps.toFixed(1);
         }, 500);
+
+        // Audio controls
+        const volumeSlider = document.getElementById('volume');
+        const audioEnabled = document.getElementById('audio-enabled');
+
+        volumeSlider.addEventListener('input', (e) => {
+            emulator.setVolume(e.target.value / 100);
+        });
+
+        audioEnabled.addEventListener('change', (e) => {
+            emulator.setAudioEnabled(e.target.checked);
+        });
 
         // Debug: Expose emulator globally for console debugging
         window.emulator = emulator;

@@ -31,6 +31,7 @@ export class MMU {
         this.ppu = null;
         this.timer = null;
         this.input = null;
+        this.apu = null;
 
         // Initialize I/O registers to boot values
         this.initIO();
@@ -295,6 +296,10 @@ export class MMU {
                 return this.ppu ? this.ppu.readRegister(addr) : this.io[reg];
 
             default:
+                // Audio registers (0xFF10-0xFF3F)
+                if (addr >= 0xFF10 && addr <= 0xFF3F) {
+                    return this.apu ? this.apu.readRegister(addr) : this.io[reg];
+                }
                 return this.io[reg];
         }
     }
@@ -355,6 +360,10 @@ export class MMU {
                 break;
 
             default:
+                // Audio registers (0xFF10-0xFF3F)
+                if (addr >= 0xFF10 && addr <= 0xFF3F) {
+                    if (this.apu) this.apu.writeRegister(addr, value);
+                }
                 this.io[reg] = value;
         }
     }
